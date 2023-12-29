@@ -10,17 +10,13 @@ from aiohttp import hdrs
 from rich import print
 
 from .client import Client
-from .models.binance import (
-    BinanceCOINMDataStore,
-    BinanceSpotDataStore,
-    BinanceUSDSMDataStore,
-)
+from .models.binance import BinanceCOINMDataStore, BinanceMarginDataStore, BinanceSpotDataStore, BinanceUSDSMDataStore
 from .models.bitbank import bitbankDataStore
 from .models.bitflyer import bitFlyerDataStore
 from .models.bitget import BitgetDataStore
 from .models.bitmex import BitMEXDataStore
-from .models.bybit_v5 import BybitV5DataStore
 from .models.bybit import BybitInverseDataStore, BybitUSDTDataStore
+from .models.bybit_v5 import BybitV5DataStore
 from .models.coincheck import CoincheckDataStore
 from .models.deprecated.binance import BinanceDataStore
 from .models.deprecated.bybit import BybitDataStore
@@ -45,6 +41,7 @@ __all__: Tuple[str, ...] = (
     "BybitUSDTDataStore",
     "BinanceDataStore",
     "BinanceSpotDataStore",
+    "BinanceMarginDataStore",
     "BinanceUSDSMDataStore",
     "BinanceCOINMDataStore",
     "bitbankDataStore",
@@ -86,9 +83,7 @@ async def _request(
     if apis is None:
         apis = {}
     async with Client(apis=apis, response_class=SyncClientResponse) as client:
-        async with client.request(
-            method, url, params=params, data=data, **kwargs
-        ) as resp:
+        async with client.request(method, url, params=params, data=data, **kwargs) as resp:
             await resp.read()
             return resp
 
@@ -103,9 +98,7 @@ def request(
     **kwargs: Any,
 ) -> SyncClientResponse:
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(
-        _request(method, url, params=params, data=data, apis=apis, **kwargs)
-    )
+    return loop.run_until_complete(_request(method, url, params=params, data=data, apis=apis, **kwargs))
 
 
 def get(
@@ -116,9 +109,7 @@ def get(
     **kwargs: Any,
 ) -> SyncClientResponse:
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(
-        _request(hdrs.METH_GET, url, params=params, apis=apis, **kwargs)
-    )
+    return loop.run_until_complete(_request(hdrs.METH_GET, url, params=params, apis=apis, **kwargs))
 
 
 def post(
@@ -129,9 +120,7 @@ def post(
     **kwargs: Any,
 ) -> SyncClientResponse:
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(
-        _request(hdrs.METH_POST, url, data=data, apis=apis, **kwargs)
-    )
+    return loop.run_until_complete(_request(hdrs.METH_POST, url, data=data, apis=apis, **kwargs))
 
 
 def put(
@@ -142,9 +131,7 @@ def put(
     **kwargs: Any,
 ) -> SyncClientResponse:
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(
-        _request(hdrs.METH_PUT, url, data=data, apis=apis, **kwargs)
-    )
+    return loop.run_until_complete(_request(hdrs.METH_PUT, url, data=data, apis=apis, **kwargs))
 
 
 def delete(
@@ -155,9 +142,7 @@ def delete(
     **kwargs: Any,
 ) -> SyncClientResponse:
     loop = asyncio.get_event_loop()
-    return loop.run_until_complete(
-        _request(hdrs.METH_DELETE, url, data=data, apis=apis, **kwargs)
-    )
+    return loop.run_until_complete(_request(hdrs.METH_DELETE, url, data=data, apis=apis, **kwargs))
 
 
 async def _ws_connect(

@@ -41,8 +41,8 @@ class BinanceDataStoreBase(DataStoreManager):
             - Binance APIドキュメントに従ってWebSocket接続後にinitializeすること。
             - orderbook データストアの initialized がTrueになる。
 
-        - GET /api/v3/openOrders, /fapi/v1/openOrders, /dapi/v1/openOrders (DataStore: order)
-        - POST /api/v3/userDataStream, /fapi/v1/listenKey, /dapi/v1/listenKey (Property: listenkey)
+        - GET /api/v3/openOrders, /sapi/v1/margin/openOrders, /fapi/v1/openOrders, /dapi/v1/openOrders (DataStore: order)
+        - POST /api/v3/userDataStream, /sapi/v1/userDataStream, /fapi/v1/listenKey, /dapi/v1/listenKey (Property: listenkey)
             - プロパティ listenkey にlistenKeyが格納され30分ごとに PUT リクエストがスケジュールされる。
         - GET /api/v3/klines, /fapi/v1/klines, /dapi/v3/klines, /dapi/v1/indexPriceKlines, /dapi/v1/markPriceKlines (DataStore: kline)
 
@@ -50,6 +50,11 @@ class BinanceDataStoreBase(DataStoreManager):
 
         - GET /api/v3/account (DataStore: account)
         - GET /api/v3/openOrderList (DataStore: ocoorder)
+
+        マージン
+
+        - GET /sapi/v1/margin/account (DataStore: account)
+        - GET /sapi/v1/margin/openOrderList (DataStore: ocoorder)
 
         先物
 
@@ -104,9 +109,7 @@ class BinanceDataStoreBase(DataStoreManager):
         asyncio.create_task(self._listenkey(resp.url, resp.__dict__["_raw_session"]))
 
     def _initialize_kline(self, resp: aiohttp.ClientResponse, data: Any):
-        self.kline._onresponse(
-            resp.url.query["symbol"], resp.url.query["interval"], data
-        )
+        self.kline._onresponse(resp.url.query["symbol"], resp.url.query["interval"], data)
 
     def _onmessage(self, msg: Any, ws: ClientWebSocketResponse) -> None:
         if "error" in msg:
@@ -283,51 +286,6 @@ class BinanceFuturesDataStoreBase(BinanceDataStoreBase):
         return self.get("position", Position)
 
 
-class BinanceSpotDataStore(BinanceDataStoreBase):
-    _ORDERBOOK_INIT_ENDPOINT = "/api/v3/depth"
-    _ORDER_INIT_ENDPOINT = "/api/v3/openOrders"
-    _LISTENKEY_INIT_ENDPOINT = "/api/v3/userDataStream"
-    _KLINE_INIT_ENDPOINT = "/api/v3/klines"
-    _ACCOUNT_INIT_ENDPOINT = "/api/v3/account"
-    _OCOORDER_INIT_ENDPOINT = "/api/v3/openOrderList"
-
-    def _init(self):
-        super()._init()
-        self.create("account", datastore_class=Account)
-        self.create("ocoorder", datastore_class=OCOOrder)
-
-    def _initialize_hook(self, resp: aiohttp.ClientResponse, data: Any, endpoint: str):
-        if self._is_target_endpoint(self._ACCOUNT_INIT_ENDPOINT, endpoint):
-            self.account._onresponse(data)
-
-        if self._is_target_endpoint(self._OCOORDER_INIT_ENDPOINT, endpoint):
-            self.ocoorder._onresponse(data)
-
-    def _onmessage_hook(self, msg: Any, event: str, data: Any):
-        if self._is_account_msg(msg, event):
-            self.account._onmessage(data)
-
-        if self._is_ocoorder_msg(msg, event):
-            self.ocoorder._onmessage(data)
-
-    def _is_account_msg(self, msg: Any, event: str):
-        return event == "outboundAccountPosition"
-
-    def _is_order_msg(self, msg: Any, event: str):
-        return event == "executionReport"
-
-    def _is_ocoorder_msg(self, msg: Any, event: str):
-        return event == "listStatus"
-
-    @property
-    def account(self):
-        return self.get("account", Account)
-
-    @property
-    def ocoorder(self):
-        return self.get("ocoorder", OCOOrder)
-
-
 class BinanceUSDSMDataStore(BinanceFuturesDataStoreBase):
     _ORDERBOOK_INIT_ENDPOINT = "/fapi/v1/depth"
     _BALANCE_INIT_ENDPOINT = "/fapi/v2/balance"
@@ -391,17 +349,11 @@ class BinanceCOINMDataStore(BinanceFuturesDataStoreBase):
 
     def _initialize_kline(self, resp: aiohttp.ClientResponse, data: Any):
         if resp.url.path.endswith("klines"):
-            self.kline._onresponse(
-                resp.url.query["symbol"], resp.url.query["interval"], data
-            )
+            self.kline._onresponse(resp.url.query["symbol"], resp.url.query["interval"], data)
         elif resp.url.path.endswith("markPriceKlines"):
-            self.markpricekline._onresponse(
-                resp.url.query["symbol"], resp.url.query["interval"], data
-            )
+            self.markpricekline._onresponse(resp.url.query["symbol"], resp.url.query["interval"], data)
         else:
-            self.indexpricekline._onresponse(
-                resp.url.query["pair"], resp.url.query["interval"], data
-            )
+            self.indexpricekline._onresponse(resp.url.query["pair"], resp.url.query["interval"], data)
 
     def _is_indexprice_msg(self, msg: Any, event: str):
         return event == "indexPriceUpdate"
@@ -423,6 +375,74 @@ class BinanceCOINMDataStore(BinanceFuturesDataStoreBase):
     @property
     def markpricekline(self) -> "Kline":
         return self.get("markpricekline", Kline)
+
+
+class BinanceSpotDataStoreBase(BinanceDataStoreBase):
+    _ORDERBOOK_INIT_ENDPOINT = "/api/v3/depth"
+    _ORDER_INIT_ENDPOINT = None
+    _LISTENKEY_INIT_ENDPOINT = None
+    _KLINE_INIT_ENDPOINT = "/api/v3/klines"
+    _ACCOUNT_INIT_ENDPOINT = None
+    _OCOORDER_INIT_ENDPOINT = None
+
+    def _init(self):
+        super()._init()
+        self.create("account", datastore_class=Account)
+        self.create("ocoorder", datastore_class=OCOOrder)
+
+    def _initialize_hook(self, resp: aiohttp.ClientResponse, data: Any, endpoint: str):
+        if self._is_target_endpoint(self._ACCOUNT_INIT_ENDPOINT, endpoint):
+            self.account._onresponse(data)
+
+        if self._is_target_endpoint(self._OCOORDER_INIT_ENDPOINT, endpoint):
+            self.ocoorder._onresponse(data)
+
+    def _onmessage_hook(self, msg: Any, event: str, data: Any):
+        if self._is_account_msg(msg, event):
+            self.account._onmessage(data)
+
+        if self._is_order_msg(msg, event):
+            self.order._onmessage(data)
+
+        if self._is_ocoorder_msg(msg, event):
+            self.ocoorder._onmessage(data)
+
+    def _is_account_msg(self, msg: Any, event: str):
+        return event == "outboundAccountPosition"
+
+    def _is_order_msg(self, msg: Any, event: str):
+        return event == "executionReport"
+
+    def _is_ocoorder_msg(self, msg: Any, event: str):
+        return event == "listStatus"
+
+    @property
+    def account(self):
+        return self.get("account", Account)
+
+    @property
+    def ocoorder(self):
+        return self.get("ocoorder", OCOOrder)
+
+
+class BinanceSpotDataStore(BinanceSpotDataStoreBase):
+    _ORDER_INIT_ENDPOINT = "/api/v3/openOrders"
+    _LISTENKEY_INIT_ENDPOINT = "/api/v3/userDataStream"
+    _ACCOUNT_INIT_ENDPOINT = "/api/v3/account"
+    _OCOORDER_INIT_ENDPOINT = "/api/v3/openOrderList"
+
+    def _init(self):
+        super()._init()
+
+
+class BinanceMarginDataStore(BinanceSpotDataStoreBase):
+    _ORDER_INIT_ENDPOINT = "/sapi/v1/margin/openOrders"
+    _LISTENKEY_INIT_ENDPOINT = "/sapi/v1/userDataStream"
+    _ACCOUNT_INIT_ENDPOINT = "/sapi/v1/margin/account"
+    _OCOORDER_INIT_ENDPOINT = "/sapi/v1/margin/openOrderList"
+
+    def _init(self):
+        super()._init()
 
 
 class Trade(DataStore):
@@ -587,16 +607,32 @@ class Account(DataStore):
         self._update(item["B"])
 
     def _onresponse(self, data: list[Item]):
-        for item in data["balances"]:
-            self._update(
-                [
-                    {
-                        "a": item["asset"],
-                        "f": item["free"],
-                        "l": item["locked"],
-                    }
-                ]
-            )
+        if "balances" in data:
+            # spot
+            for item in data["balances"]:
+                self._update(
+                    [
+                        {
+                            "a": item["asset"],
+                            "f": item["free"],
+                            "l": item["locked"],
+                        }
+                    ]
+                )
+        elif "userAssets" in data:
+            # margin
+            for item in data["userAssets"]:
+                self._update(
+                    [
+                        {
+                            "a": item["asset"],
+                            # "b": item["borrowed"],
+                            "f": item["free"],
+                            "l": item["locked"],
+                            # "n": item["netAsset"],
+                        }
+                    ]
+                )
 
 
 class Balance(DataStore):
@@ -650,13 +686,13 @@ class Order(DataStore):
             event = item["o"]["X"]
             items = [item["o"]]
         elif item["e"] == "executionReport":
-            # spot
+            # spot or margin (ref: https://binance-docs.github.io/apidocs/spot/en/#payload-order-update)
             event = item["X"]
             items = [item]
         else:
             raise RuntimeError(f"Unsupported event: {item}")
 
-        if event not in ("FILLED", "CANCELED", "EXPIRED", "REJECTED"):
+        if event not in ("FILLED", "CANCELED", "EXPIRED", "REJECTED", "TRADE_PREVENTION"):
             self._update(items)
         else:
             self._delete(items)
@@ -667,7 +703,6 @@ class Order(DataStore):
         else:
             self._clear()
         for item in data:
-
             if "positionSide" in item:
                 # futures
                 self._insert(
@@ -695,18 +730,48 @@ class Order(DataStore):
                         }
                     ]
                 )
+            elif "isIsolated" in item:
+                # margin (ref: https://binance-docs.github.io/apidocs/spot/en/#query-margin-account-39-s-open-orders-user_data)
+                # dict keys should match with WebSocket order update message keys (https://binance-docs.github.io/apidocs/spot/en/#payload-order-update)
+                self._insert(
+                    [
+                        {
+                            "c": item["clientOrderId"],
+                            "Z": item["cummulativeQuoteQty"],
+                            "z": item["executedQty"],
+                            "F": item["icebergQty"],
+                            "w": item["isWorking"],
+                            "i": item["orderId"],
+                            "q": item["origQty"],
+                            "p": item["price"],
+                            "S": item["side"],
+                            "X": item["status"],
+                            "P": item["stopPrice"],
+                            "s": item["symbol"],
+                            "so": item["isIsolated"],
+                            "E": item["time"],
+                            "f": item["timeInForce"],
+                            "o": item["type"],
+                            "V": item["selfTradePreventionMode"],
+                            "T": item["updateTime"],
+                        }
+                    ]
+                )
             else:
-                # spot
+                # spot (ref: https://binance-docs.github.io/apidocs/spot/en/#current-open-orders-user_data)
+                # dict keys should match with WebSocket order update message keys (https://binance-docs.github.io/apidocs/spot/en/#payload-order-update)
                 self._insert(
                     [
                         {
                             "s": item["symbol"],
                             "i": item["orderId"],
+                            # "g": item["orderListId"],
                             "c": item["clientOrderId"],
                             "p": item["price"],
                             "q": item["origQty"],
                             "z": item["executedQty"],
                             "Z": item["cummulativeQuoteQty"],
+                            # "X": item["status"],
                             "f": item["timeInForce"],
                             "o": item["type"],
                             "S": item["side"],
@@ -715,7 +780,9 @@ class Order(DataStore):
                             "E": item["time"],
                             "T": item["updateTime"],
                             "w": item["isWorking"],
+                            "W": item["workingTime"],
                             "Q": item["origQuoteOrderQty"],
+                            "V": item["selfTradePreventionMode"],
                         }
                     ]
                 )
