@@ -29,6 +29,7 @@ class BinanceDataStoreBase(DataStoreManager):
         self.create("orderbook", datastore_class=OrderBook)
         self.create("order", datastore_class=Order)
         self.listenkey: Optional[str] = None
+        self.listenkey_margin: Optional[str] = None
 
     async def initialize(self, *aws: Awaitable[aiohttp.ClientResponse]) -> None:
         """
@@ -105,7 +106,10 @@ class BinanceDataStoreBase(DataStoreManager):
         self.order._onresponse(symbol, data)
 
     def _initialize_listenkey(self, resp: aiohttp.ClientResponse, data: Any):
-        self.listenkey = data["listenKey"]
+        if resp.url.path.startswith(BinanceMarginDataStore._LISTENKEY_INIT_ENDPOINT[1]):
+            self.listenkey_margin = data["listenKey"]
+        else:
+            self.listenkey = data["listenKey"]
         asyncio.create_task(self._listenkey(resp.url, resp.__dict__["_raw_session"]))
 
     def _initialize_kline(self, resp: aiohttp.ClientResponse, data: Any):
@@ -170,8 +174,12 @@ class BinanceDataStoreBase(DataStoreManager):
         raise NotImplementedError
 
     async def _listenkey(self, url: aiohttp.client.URL, session: aiohttp.ClientSession):
-        if url.path.startswith(BinanceSpotDataStore._LISTENKEY_INIT_ENDPOINT):
+        if url.path.startswith(BinanceSpotDataStore._LISTENKEY_INIT_ENDPOINT) or url.path.startswith(
+            BinanceMarginDataStore._LISTENKEY_INIT_ENDPOINT[0]
+        ):
             params = {"listenKey": self.listenkey}
+        elif url.path.startswith(BinanceMarginDataStore._LISTENKEY_INIT_ENDPOINT[1]):
+            params = {"listenKey": self.listenkey_margin}
         else:
             params = None
         while not session.closed:
@@ -379,8 +387,6 @@ class BinanceCOINMDataStore(BinanceFuturesDataStoreBase):
 
 class BinanceSpotDataStoreBase(BinanceDataStoreBase):
     _ORDERBOOK_INIT_ENDPOINT = "/api/v3/depth"
-    _ORDER_INIT_ENDPOINT = None
-    _LISTENKEY_INIT_ENDPOINT = None
     _KLINE_INIT_ENDPOINT = "/api/v3/klines"
     _ACCOUNT_INIT_ENDPOINT = None
     _OCOORDER_INIT_ENDPOINT = None
@@ -437,12 +443,28 @@ class BinanceSpotDataStore(BinanceSpotDataStoreBase):
 
 class BinanceMarginDataStore(BinanceSpotDataStoreBase):
     _ORDER_INIT_ENDPOINT = "/sapi/v1/margin/openOrders"
-    _LISTENKEY_INIT_ENDPOINT = "/sapi/v1/userDataStream"
+    _LISTENKEY_INIT_ENDPOINT = ("/sapi/v1/userDataStream", "/sapi/v1/margin/listen-key")
     _ACCOUNT_INIT_ENDPOINT = "/sapi/v1/margin/account"
     _OCOORDER_INIT_ENDPOINT = "/sapi/v1/margin/openOrderList"
 
     def _init(self):
         super()._init()
+        self.create("liability", datastore_class=Liability)
+        self.create("marginlevel", datastore_class=MarginLevel)
+
+    def _onmessage_hook(self, msg: Any, event: str, data: Any):
+        super()._onmessage_hook(msg, event, data)
+        if self._is_liability_msg(msg, event):
+            self.liability._onmessage(data)
+
+        if self._is_marginlevel_msg(msg, event):
+            self.marginlevel._onmessage(data)
+
+    def _is_liability_msg(self, msg: Any, event: str):
+        return event == "USER_LIABILITY_CHANGE"
+
+    def _is_marginlevel_msg(self, msg: Any, event: str):
+        return event == "MARGIN_LEVEL_STATUS_CHANGE"
 
 
 class Trade(DataStore):
@@ -823,3 +845,13 @@ class OCOOrder(DataStore):
             self._delete([item])
         else:
             self._update([item])
+
+
+class Liability(DataStore):
+    def _onmessage(self, item: Item) -> None:
+        self._insert([item])
+
+
+class MarginLevel(DataStore):
+    def _onmessage(self, item: Item) -> None:
+        self._insert([item])
